@@ -1,3 +1,4 @@
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +27,7 @@ int create_listening_socket(int port) {
 
 	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
-	server_addr.sin_addr.s_addr = INADDR_ANY //listens on all available interfaces not only 127.0...
+	server_addr.sin_addr.s_addr = INADDR_ANY; //listens on all available interfaces not only 127.0...
 	server_addr.sin_port = htons(port);
 
 	if (bind(listen_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -45,6 +46,40 @@ int create_listening_socket(int port) {
 
 }
 
+void handle_client_request(int client_fd) {
+        char buffer[BUFFER_SIZE];
+        ssize_t bytes_read;
+
+        bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
+        if(bytes_read < 0) {
+                perror("BYTES NOT READ\n");
+                return;
+        }
+        else {
+                buffer[bytes_read] = '\0';
+                printf("Client request: %s\n", buffer);
+        }
+
+        close(client_fd);
+}
+
+void fork_for_client(int client_fd, int listen_fd) {
+        pid_t pid = fork();
+        if(pid < 0) {
+                perror("FORK FAILED\n");
+                close(client_fd);
+                return;
+        }
+        else if(pid == 0) { //then we are in the child process
+                close(listen_fd); // because child doesn't need that socket
+                handle_client_request(client_fd);
+                exit(EXIT_SUCCESS);
+        }
+        else {
+                close(client_fd); //parent doesn't need that socket after it forked
+        }
+}
+
 void poll_for_connections(int listen_fd) {
 	struct pollfd fds[1];
 	fds[0].fd = listen_fd;
@@ -57,7 +92,7 @@ void poll_for_connections(int listen_fd) {
 			exit(1);
 		}
 
-		if(ret == 0) {
+		if(retPoll == 0) {
 			continue;
 		}
 
@@ -70,40 +105,8 @@ void poll_for_connections(int listen_fd) {
 				continue;
 			}
 
-			fork_for_client(client_fd);
+			fork_for_client(client_fd, listen_fd);
 		}
-}
-
-void fork_for_client(int client_fd) {
-	pid_t pid = fork();
-	if(pid < 0) {
-		perror("FORK FAILED\n");
-		close(client_fd);
-		return;
-	}
-	else if(pid == 0) { //then we are in the child process
-		close(listen_fd); // because child doesn't need that socket
-		handle_client_request(client_fd);
-		exit(EXIT_SUCCESS);
-	}
-	else {
-		close(client_fd); //parent doesn't need that socket after it forked
 	}
 }
 
-void handle_client_request(int client_fd) {
-	char buffer[BUFFER_SIZE];
-	ssize_t bytes_read;
-
-	bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-	if(bytes_read < 0) {
-		perror("BYTES NOT READ\n");
-		return;
-	}
-	else {
-		buffer[bytes_read] = '\0';
-		printf("Client request: %s\n", buffer);
-	}
-
-	close(client_fd);
-}
