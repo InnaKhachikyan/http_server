@@ -9,10 +9,12 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <errno.h>
+#include <sys/wait.h>
 
 #define PORT 8080
-#define BUFFER_SIZE 1024
+#define READ_CHUNK 256
 #define POLL_TIME 100
+#define MAX_HEADER_SIZE (8 * 1024) // I looked through the standards, its 8KB-16KB
 
 int create_listening_socket(int port) {
 	int listen_fd;
@@ -24,6 +26,13 @@ int create_listening_socket(int port) {
         	perror("socket");
         	exit(EXIT_FAILURE);
 	}
+
+	// not to get the error "address already in use"
+	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        	perror("setsockopt");
+        	close(listen_fd);
+        	exit(EXIT_FAILURE);
+    	}
 
 	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
@@ -46,22 +55,69 @@ int create_listening_socket(int port) {
 
 }
 
-void handle_client_request(int client_fd) {
-        char buffer[BUFFER_SIZE];
-        ssize_t bytes_read;
+int read_http_request(int client_fd, char **out_buf, size_t *out_len) {
+	size_t length = 0;
+	size_t buffer_size = READ_CHUNK;
+	char *buffer = (char*)(malloc(buffer_size));
+	if(!buffer) {
+		printf("Memory for buffer not allocated\n");
+		exit(EXIT_FAILURE);
+	}
 
-        bytes_read = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        if(bytes_read < 0) {
-                perror("BYTES NOT READ\n");
-                return;
-        }
-        else {
-                buffer[bytes_read] = '\0';
-                printf("Client request: %s\n", buffer);
-        }
+	while(1) {
 
-        close(client_fd);
+		if(buffer_size > MAX_HEADER_SIZE) {
+			fprintf(stderr, "Too large header\n");
+			free(buffer);
+			buffer = NULL;
+			return -1;
+		}
+
+		if(length + READ_CHUNK + 1 > buffer_size) {
+			buffer_size *= 2;
+			char *tmp = realloc(buffer, buffer_size);
+			if(!buffer) {
+				printf("Realloc failed\n");
+				free(buffer);
+				buffer = NULL;
+				exit(EXIT_FAILURE);
+			}
+			buffer = tmp;
+		}
+
+		ssize_t bytes_received = recv(client_fd, buffer + length, READ_CHUNK, 0);
+		if(bytes_received < 0) {
+			printf("Receive failed\n");
+			free(buffer);
+			buffer = NULL;
+			exit(EXIT_FAILURE);
+		}
+		if(bytes_received == 0)  { //means peer closed the connection
+			break;
+		}
+
+		length += bytes_received;
+		buffer[length] = '\0';
+		if(strstr(buffer, "\r\n\r\n") != NULL) {
+			break;
+		}
+	}
+	*out_buf = buffer;
+	*out_len = length;
+	return 0;
 }
+
+void handle_client_request(int client_fd) {
+        char *request = NULL;
+	size_t request_length;
+
+	if(read_http_request(client_fd, &request, &request_length) == 0) {
+		printf("Received HTTP request (%zu bytes): \n%s\n", request_length, request);
+	}
+	free(request);
+	close(client_fd);
+}
+
 
 void fork_for_client(int client_fd, int listen_fd) {
         pid_t pid = fork();
@@ -92,6 +148,13 @@ void poll_for_connections(int listen_fd) {
 			exit(1);
 		}
 
+		int status;
+		pid_t pid;
+
+		while((pid = waitpid(-1, &status, WNOHANG)) > 0 ) {
+			printf("Child %d exited %d\n", pid, WEXITSTATUS(status));
+		}
+
 		if(retPoll == 0) {
 			continue;
 		}
@@ -108,5 +171,16 @@ void poll_for_connections(int listen_fd) {
 			fork_for_client(client_fd, listen_fd);
 		}
 	}
+}
+
+int main() {
+
+        int listen_fd = create_listening_socket(PORT);
+        printf("Listening on port %d\n", PORT);
+
+        poll_for_connections(listen_fd);
+
+        close(listen_fd);
+        return 0;
 }
 
