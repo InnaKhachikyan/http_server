@@ -10,11 +10,23 @@
 #include <netinet/in.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <ctype.h>
 
 #define PORT 8080
 #define READ_CHUNK 256
 #define POLL_TIME 100
 #define MAX_HEADER_SIZE (8 * 1024) // I looked through the standards, its 8KB-16KB
+#define MAX_HEADERS 50 // most http requests send under 20 headers, 50 is chosen for safety
+
+struct http_request {
+	char *method;
+	char *path;
+	char *version;
+	char *header_name[MAX_HEADERS];
+	char *header_value[MAX_HEADERS];
+	int header_count;
+	char *body; //if there is anything after the \r\n\r\n
+};
 
 int create_listening_socket(int port) {
 	int listen_fd;
@@ -23,16 +35,16 @@ int create_listening_socket(int port) {
 
 	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (listen_fd < 0) {
-        	perror("socket");
-        	exit(EXIT_FAILURE);
+		perror("socket");
+		exit(EXIT_FAILURE);
 	}
 
 	// not to get the error "address already in use"
 	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        	perror("setsockopt");
-        	close(listen_fd);
-        	exit(EXIT_FAILURE);
-    	}
+		perror("setsockopt");
+		close(listen_fd);
+		exit(EXIT_FAILURE);
+	}
 
 	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
@@ -40,19 +52,18 @@ int create_listening_socket(int port) {
 	server_addr.sin_port = htons(port);
 
 	if (bind(listen_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        	perror("bind");
-        	close(listen_fd);
-        	exit(EXIT_FAILURE);
-    	}
+		perror("bind");
+		close(listen_fd);
+		exit(EXIT_FAILURE);
+	}
 
 	if (listen(listen_fd, SOMAXCONN) < 0) { //SOMAXCONN: the max num of backlog allowed by OS
-    		perror("listen");
-    		close(listen_fd);
-    		exit(EXIT_FAILURE);
+		perror("listen");
+		close(listen_fd);
+		exit(EXIT_FAILURE);
 	}
 
 	return listen_fd;
-
 }
 
 int read_http_request(int client_fd, char **out_buf, size_t *out_len) {
@@ -107,33 +118,148 @@ int read_http_request(int client_fd, char **out_buf, size_t *out_len) {
 	return 0;
 }
 
+// we need to trim the whitespace from start/end
+
+char *trim(char *s) {
+	while(*s && isspace((unsigned char)*s)) {
+		s++;
+	}
+	if(*s == '\0') {
+		return s;
+	}
+	char *end = s + strlen(s) - 1;
+	while(end > s && isspace((unsigned char)*end)) {
+		*end-- = '\0';
+	}
+	return s;
+}
+
+// parsing raw http into req; returns 0 on success
+
+int parse_http_request(const char *raw, struct http_request *req) {
+	char *copy = strdup(raw);
+	if(!copy) {
+		return -1;
+	}
+
+	char *line_saveptr, *save_ptr, *line;
+
+	line = strtok_r(copy, "\r\n", &line_saveptr);
+	if(!line) {
+		free(copy);
+		copy = NULL;
+		return -1;
+	}
+
+	char *met = strtok_r(line, " ", &save_ptr);
+	char *pth = strtok_r(NULL, " ", &save_ptr);
+	char *ver = strtok_r(NULL, " ", &save_ptr);
+	if(!met || !pth || !ver) {
+		free(copy);
+		copy = NULL;
+		return -1;
+	}
+
+	req->method = strdup(met);
+	req->path = strdup(pth);
+	req->version = strdup(ver);
+
+	req->header_count = 0;
+	while((line = strtok_r(NULL, "\r\n", &line_saveptr)) && *line) {
+		if(req->header_count >= MAX_HEADERS) {
+			break;
+		}
+
+		char *colon = strchr(line, ':');
+		if(!colon) {
+			continue;
+		}
+		*colon = '\0';
+
+		char *name = trim(line);
+		char *value = trim(colon + 1);
+
+		req->header_name[req->header_count] = strdup(name);
+		req->header_value[req->header_count] = strdup(value);
+		req->header_count++;
+	}
+
+	char *body_start = strstr(raw, "\r\n\r\n");
+	if(body_start != NULL) {
+		req->body = strdup(body_start + 4);
+		if(req->body == NULL) {
+			perror("strdup failure");
+		}
+	}
+	else {
+		req->body = NULL;
+	}
+	free(copy);
+	copy = NULL;
+	return 0;
+}
+
 void handle_client_request(int client_fd) {
-        char *request = NULL;
+	char *request = NULL;
 	size_t request_length;
 
 	if(read_http_request(client_fd, &request, &request_length) == 0) {
-		printf("Received HTTP request (%zu bytes): \n%s\n", request_length, request);
+		struct http_request req = {0};
+		if(parse_http_request(request, &req) == 0) {
+			printf("Request:\nMethod: %s\nPath: %s\nVersion: %s\n", req.method, req.path, req.version);
+			for(int i = 0; i < req.header_count; i++) {
+				printf("%s: %s\n", req.header_name[i], req.header_value[i]);
+			}
+			
+			if(req.body) {
+				printf("Body: %s\n", req.body);
+			}
+		
+	
+
+// basic auth and response logic needs to be implemented yet
+
+//in the end free all alocated memory
+			free(req.method);
+			req.method = NULL;
+			free(req.path);
+			req.path = NULL;
+			free(req.version);
+			req.version = NULL;
+			for(int i = 0; i < req.header_count; i++) {
+			free(req.header_name[i]);
+			req.header_name[i] = NULL;
+			free(req.header_value[i]);
+			req.header_value[i] = NULL;
+			}
+			free(req.body);
+			req.body = NULL;
+		}
+		else {
+			fprintf(stderr, "Parsing failed\n");
+		}
 	}
 	free(request);
+	request = NULL;
 	close(client_fd);
 }
 
 
 void fork_for_client(int client_fd, int listen_fd) {
-        pid_t pid = fork();
-        if(pid < 0) {
-                perror("FORK FAILED\n");
-                close(client_fd);
-                return;
-        }
-        else if(pid == 0) { //then we are in the child process
-                close(listen_fd); // because child doesn't need that socket
-                handle_client_request(client_fd);
-                exit(EXIT_SUCCESS);
-        }
-        else {
-                close(client_fd); //parent doesn't need that socket after it forked
-        }
+	pid_t pid = fork();
+	if(pid < 0) {
+		perror("FORK FAILED\n");
+		close(client_fd);
+		return;
+	}
+	else if(pid == 0) { //then we are in the child process
+		close(listen_fd); // because child doesn't need that socket
+		handle_client_request(client_fd);
+		exit(EXIT_SUCCESS);
+	}
+	else {
+		close(client_fd); //parent doesn't need that socket after it forked
+	}
 }
 
 void poll_for_connections(int listen_fd) {
@@ -175,12 +301,12 @@ void poll_for_connections(int listen_fd) {
 
 int main() {
 
-        int listen_fd = create_listening_socket(PORT);
-        printf("Listening on port %d\n", PORT);
+	int listen_fd = create_listening_socket(PORT);
+	printf("Listening on port %d\n", PORT);
 
-        poll_for_connections(listen_fd);
+	poll_for_connections(listen_fd);
 
-        close(listen_fd);
-        return 0;
+	close(listen_fd);
+	return 0;
 }
 
