@@ -12,5 +12,5 @@ Currently I implemented the struct hhtp_request and the method read_http_request
 
 
 Users: I implemented a small separate file for storing user-pass table. We have an array of struct, where we can add, delete, search and authenticate. The array is dynamic: if we reached the capacity, it resizes.
-Currently I am just including my userpass_map.c file in the server.c, but it gives error of multiple definition, so I will have to separate header + implementation of the userpass_map.
 
+Userpass is separated into headers and implementation: userpass_map.h is the "interface", what is exposed to the user, while userpass_map.c is the actual implementation of handling the map.

@@ -11,7 +11,7 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <ctype.h>
-#include "userpass_map.c"
+#include "userpass_map.h"
 
 #define PORT 8080
 #define READ_CHUNK 256

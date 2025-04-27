@@ -1,17 +1,13 @@
+#include "userpass_map.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
-struct User {
-	char *username;
-	char *password;
-};
-
-static struct User *entries = NULL;
-static size_t user_count = 0;
-static size_t capacity = 0;
+struct User *entries = NULL;
+size_t user_count = 0;
+size_t capacity = 0;
 
 static int ensure_capacity(void) {
 	if(user_count < capacity) {
@@ -26,21 +22,6 @@ static int ensure_capacity(void) {
 	capacity = new_capacity;
 	return 0;
 }
-
-typedef int AddUserResult;
-enum 
-{
-	ADD_USER_OK = 0,
-	ADD_USER_EXISTS = 1,
-	ADD_USER_ERR = -1
-};
-
-typedef int DeleteUserResult;
-enum
-{
-	DELETE_USER_OK = 0,
-	DELETE_USER_NOT_FOUND = 1
-};
 
 void init_user_map(void) {
 	entries = NULL;
