@@ -69,7 +69,7 @@ int delete_user(const char *user) {
 		if(strcmp(entries[i].username, user) == 0) {
 			free(entries[i].username);
 			free(entries[i].password);
-			memmove(&entries[i], &entries[i+1], (user_count - i - 1)*sizeof(user));
+			memmove(&entries[i], &entries[i+1], (user_count - i - 1)*sizeof(struct User));
 			user_count--;
 			return DELETE_USER_OK;
 		}

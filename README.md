@@ -8,6 +8,27 @@ Task steps:
 7) check if the given path exists, return whatever is in the file, else return 404 error.
 8) Handle chunked and unchunked server response features.
 
+### main():
+the user map is initialized and populated with a set of username/password pairs. A listening socket is created on PORT (default 8080).
+
+### poll_for_connections():
+monitors the listening socket using poll(), when ready, accepts the client socket and forks a child.
+
+### handle_client_request()
+In the child this method is called, it calls corresponding methods in the body to do the job step by step:
+
+### read_http_request():
+reads from the socket in a loop until reaching \r\n\r\n or until the header grows too large.
+
+### parse_http_request()
+parses the request, separates method, path, version, headers, and optional body.
+
+### authenticate()
+locates the Authorization header, decodes Base64 via OpenSSL, and checks against the user table. Sends appropriate  400/401 response if error occurs. If authentication succeeds, a 200 OK is sent.
+
+### cleanup()
+frees all dynamically allocated memory and closes the socket.
+
 Currently I implemented the struct hhtp_request and the method read_http_request in a way that those would handle any length up to MAX_HEADER_SIZE, the standard deviation is 8KB-16KB, so Ijust chose 8 * 1024.
 
 

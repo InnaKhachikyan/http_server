@@ -92,7 +92,7 @@ int read_http_request(int client_fd, char **out_buf, size_t *out_len) {
 		if(length + READ_CHUNK + 1 > buffer_size) {
 			buffer_size *= 2;
 			char *tmp = realloc(buffer, buffer_size);
-			if(!buffer) {
+			if(!tmp) {
 				printf("Realloc failed\n");
 				free(buffer);
 				buffer = NULL;
@@ -305,50 +305,32 @@ void handle_client_request(int client_fd) {
 	char *request = NULL;
 	size_t request_length;
 
-	if(read_http_request(client_fd, &request, &request_length) == 0) {
-		struct http_request req = {0};
-		if(parse_http_request(request, &req) == 0) {
-			printf("Request:\nMethod: %s\nPath: %s\nVersion: %s\n", req.method, req.path, req.version);
-			for(int i = 0; i < req.header_count; i++) {
-				printf("%s: %s\n", req.header_name[i], req.header_value[i]);
-			}
-			
-			if(req.body) {
-				printf("Body: %s\n", req.body);
-			}
-		
-	
-			if(!authenticate(&req, client_fd)) {
-				cleanup(req);
-			}
-
-			const char *ok = 
-				"HTTP/1.1 200 OK\r\n"
-          			"Content-Length: 0\r\n"
-          			"\r\n";
-			send(client_fd, ok, strlen(ok), 0);
-
-			free(req.method);
-			req.method = NULL;
-			free(req.path);
-			req.path = NULL;
-			free(req.version);
-			req.version = NULL;
-			for(int i = 0; i < req.header_count; i++) {
-			free(req.header_name[i]);
-			req.header_name[i] = NULL;
-			free(req.header_value[i]);
-			req.header_value[i] = NULL;
-			}
-			free(req.body);
-			req.body = NULL;
-		}
-		else {
-			fprintf(stderr, "Parsing failed\n");
-		}
+	if(read_http_request(client_fd, &request, &request_length) < 0 ) {
+		close(client_fd);
+		return;
 	}
+
+	struct http_request req = {0};
+	if(parse_http_request(request, &req) < 0) {
+		free(request);
+		close(client_fd);
+		return;
+	}
+
+	if(!authenticate(&req, client_fd)) {
+		cleanup(&req);
+		free(request);
+		close(client_fd);
+		return;
+	}
+
+	const char *resp200 =
+		"HTTP/1.1 200 OK\r\n"
+        	"Content-Length: 0\r\n"
+        	"\r\n";
+	send(client_fd, resp200, strlen(resp200), 0);
+	cleanup(&req);
 	free(request);
-	request = NULL;
 	close(client_fd);
 }
 
@@ -408,16 +390,8 @@ void poll_for_connections(int listen_fd) {
 }
 
 int main() {
-
-	int listen_fd = create_listening_socket(PORT);
-	printf("Listening on port %d\n", PORT);
-
-	poll_for_connections(listen_fd);
-
-	close(listen_fd);
 	init_user_map();
-
-    add_user("Alice",   "0123456");
+	add_user("Alice",   "0123456");
     add_user("Bob",     "987654");
     add_user("Charlie", "pass123");
     add_user("David",   "qwerty");
@@ -432,6 +406,13 @@ int main() {
     for (size_t i = 0; i < user_count; i++) {
         printf("User %zu: %s / %s\n", i+1, entries[i].username, entries[i].password);
     }
+
+	int listen_fd = create_listening_socket(PORT);
+	printf("Listening on port %d\n", PORT);
+
+	poll_for_connections(listen_fd);
+
+	close(listen_fd);
 
     free_user_map();
     return 0;
