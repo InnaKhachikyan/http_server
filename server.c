@@ -1,6 +1,7 @@
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -12,6 +13,9 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include "userpass_map.h"
+#include <openssl/bio.h>
+#include<openssl/evp.h>
+#include <openssl/buffer.h>
 
 #define PORT 8080
 #define READ_CHUNK 256
@@ -200,6 +204,103 @@ int parse_http_request(const char *raw, struct http_request *req) {
 	return 0;
 }
 
+static int decode_base64_openssl(const char *in, unsigned char *out, int out_len) {
+	BIO *b64 = BIO_new(BIO_f_base64());
+	BIO *bmem = BIO_new_mem_buf((void*)in, -1);
+	b64 = BIO_push(b64, bmem);
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	int decoded = BIO_read(b64, out, out_len);
+	if(decoded < 0) {
+		decoded = -1;
+	}
+	else {
+		if(decoded < out_len) {
+			out[decoded] = '\0';
+		}
+	}
+
+	BIO_free_all(b64);
+	return decoded;
+}
+
+static bool authenticate(const struct http_request *req, int client_fd) {
+	const char *auth = NULL;
+	for(int i = 0; i < req->header_count; i++) {
+		if(strcasecmp(req->header_name[i], "Authorization") == 0) {
+			auth = req->header_value[i];
+			break;
+		}
+	}
+	if(!auth) {
+		const char *resp = 
+			"HTTP/1.1 401 Unauthorized\r\n"
+          		"WWW-Authenticate: Basic realm=\"MyServer\"\r\n"
+          		"Content-Length: 0\r\n"
+          		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return false;
+	}
+
+	if(strncasecmp(auth, "Basic ", 6) != 0) {
+		const char *resp = 
+			"HTTP/1.1 400 Bad Request\r\n"
+          		"Content-Length: 0\r\n"
+          		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return false;
+	}
+
+	const char *b64 = auth + 6;
+	unsigned char cred[512];
+	int n = decode_base64_openssl(b64, cred, sizeof(cred)-1);
+	if(n <= 0) {
+		const char *resp = 
+			"HTTP/1.1 400 Bad Request\r\n"
+          		"Content-Length: 0\r\n"
+          		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return false;
+	}
+	cred[n] = '\0';
+
+	char *sep = strchr((char*)cred, ':');
+	if(!sep) {
+		const char *resp = 
+			"HTTP/1.1 400 Bad Request\r\n"
+          		"Content-Length: 0\r\n"
+          		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return false;
+	}
+	*sep = '\0';
+	const char *user = (char*)cred;
+	const char *pass = sep + 1;
+
+	if(!authenticate_user(user, pass)) {
+		const char *resp = 
+			"HTTP/1.1 401 Unauthorized\r\n"
+          		"WWW-Authenticate: Basic realm=\"MyServer\"\r\n"
+          		"Content-Length: 0\r\n"
+          		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return false;
+	}
+
+	return true;
+}
+
+static void cleanup(struct http_request *req) {
+    if (!req) return;
+    free(req->method);
+    free(req->path);
+    free(req->version);
+    for (int i = 0; i < req->header_count; i++) {
+        free(req->header_name[i]);
+        free(req->header_value[i]);
+    }
+    free(req->body);
+}
+
 void handle_client_request(int client_fd) {
 	char *request = NULL;
 	size_t request_length;
@@ -217,10 +318,16 @@ void handle_client_request(int client_fd) {
 			}
 		
 	
+			if(!authenticate(&req, client_fd)) {
+				cleanup(req);
+			}
 
-// basic auth and response logic needs to be implemented yet
+			const char *ok = 
+				"HTTP/1.1 200 OK\r\n"
+          			"Content-Length: 0\r\n"
+          			"\r\n";
+			send(client_fd, ok, strlen(ok), 0);
 
-//in the end free all alocated memory
 			free(req.method);
 			req.method = NULL;
 			free(req.path);
