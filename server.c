@@ -16,6 +16,9 @@
 #include <openssl/bio.h>
 #include<openssl/evp.h>
 #include <openssl/buffer.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <limits.h>
 
 #define PORT 8080
 #define READ_CHUNK 256
@@ -67,7 +70,6 @@ int create_listening_socket(int port) {
 		close(listen_fd);
 		exit(EXIT_FAILURE);
 	}
-
 	return listen_fd;
 }
 
@@ -128,48 +130,50 @@ int read_http_request(int client_fd, char **out_buf, size_t *out_len) {
 char *trim(char *s) {
 	while(*s && isspace((unsigned char)*s)) {
 		s++;
-	}
-	if(*s == '\0') {
-		return s;
-	}
-	char *end = s + strlen(s) - 1;
-	while(end > s && isspace((unsigned char)*end)) {
-		*end-- = '\0';
-	}
+		}
+		if(*s == '\0') {
+			return s;
+		}
+		char *end = s + strlen(s) - 1;
+		while(end > s && isspace((unsigned char)*end)) {
+			*end-- = '\0';
+		}
 	return s;
 }
 
 // parsing raw http into req; returns 0 on success
-
 int parse_http_request(const char *raw, struct http_request *req) {
 	char *copy = strdup(raw);
-	if(!copy) {
+	if (!copy) {
 		return -1;
 	}
 
 	char *line_saveptr, *save_ptr, *line;
-
 	line = strtok_r(copy, "\r\n", &line_saveptr);
-	if(!line) {
-		free(copy);
-		copy = NULL;
-		return -1;
+	if (!line) { 
+		free(copy); 
+		return -1; 
 	}
 
 	char *met = strtok_r(line, " ", &save_ptr);
 	char *pth = strtok_r(NULL, " ", &save_ptr);
 	char *ver = strtok_r(NULL, " ", &save_ptr);
-	if(!met || !pth || !ver) {
-		free(copy);
-		copy = NULL;
-		return -1;
+	if (!met || !pth || !ver) { 
+		free(copy); 
+		return -1; 
+	}
+
+	char *q = strchr(pth, '?');
+	if (q) {
+		*q = '\0';
 	}
 
 	req->method = strdup(met);
-	req->path = strdup(pth);
-	req->version = strdup(ver);
+	req->path   = strdup(pth);
+	req->version= strdup(ver);
 
 	req->header_count = 0;
+
 	while((line = strtok_r(NULL, "\r\n", &line_saveptr)) && *line) {
 		if(req->header_count >= MAX_HEADERS) {
 			break;
@@ -233,19 +237,19 @@ static bool authenticate(const struct http_request *req, int client_fd) {
 	}
 	if(!auth) {
 		const char *resp = 
-			"HTTP/1.1 401 Unauthorized\r\n"
-          		"WWW-Authenticate: Basic realm=\"MyServer\"\r\n"
-          		"Content-Length: 0\r\n"
-          		"\r\n";
+		"HTTP/1.1 401 Unauthorized\r\n"
+		"WWW-Authenticate: Basic realm=\"MyServer\"\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
 		send(client_fd, resp, strlen(resp), 0);
 		return false;
 	}
 
 	if(strncasecmp(auth, "Basic ", 6) != 0) {
 		const char *resp = 
-			"HTTP/1.1 400 Bad Request\r\n"
-          		"Content-Length: 0\r\n"
-          		"\r\n";
+		"HTTP/1.1 400 Bad Request\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
 		send(client_fd, resp, strlen(resp), 0);
 		return false;
 	}
@@ -255,9 +259,9 @@ static bool authenticate(const struct http_request *req, int client_fd) {
 	int n = decode_base64_openssl(b64, cred, sizeof(cred)-1);
 	if(n <= 0) {
 		const char *resp = 
-			"HTTP/1.1 400 Bad Request\r\n"
-          		"Content-Length: 0\r\n"
-          		"\r\n";
+		"HTTP/1.1 400 Bad Request\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
 		send(client_fd, resp, strlen(resp), 0);
 		return false;
 	}
@@ -266,9 +270,9 @@ static bool authenticate(const struct http_request *req, int client_fd) {
 	char *sep = strchr((char*)cred, ':');
 	if(!sep) {
 		const char *resp = 
-			"HTTP/1.1 400 Bad Request\r\n"
-          		"Content-Length: 0\r\n"
-          		"\r\n";
+		"HTTP/1.1 400 Bad Request\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
 		send(client_fd, resp, strlen(resp), 0);
 		return false;
 	}
@@ -276,29 +280,94 @@ static bool authenticate(const struct http_request *req, int client_fd) {
 	const char *user = (char*)cred;
 	const char *pass = sep + 1;
 
-	if(!authenticate_user(user, pass)) {
-		const char *resp = 
-			"HTTP/1.1 401 Unauthorized\r\n"
-          		"WWW-Authenticate: Basic realm=\"MyServer\"\r\n"
-          		"Content-Length: 0\r\n"
-          		"\r\n";
+	if (!authenticate_user(user, pass)) {
+		const char *resp =
+		"HTTP/1.1 403 Forbidden\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
 		send(client_fd, resp, strlen(resp), 0);
 		return false;
 	}
-
 	return true;
 }
 
 static void cleanup(struct http_request *req) {
-    if (!req) return;
-    free(req->method);
-    free(req->path);
-    free(req->version);
-    for (int i = 0; i < req->header_count; i++) {
-        free(req->header_name[i]);
-        free(req->header_value[i]);
-    }
-    free(req->body);
+	if (!req) {
+		return;
+	}
+	free(req->method);
+	free(req->path);
+	free(req->version);
+	for (int i = 0; i < req->header_count; i++) {
+		free(req->header_name[i]);
+		free(req->header_value[i]);
+	}
+	free(req->body);
+}
+
+static void send_file_response(int client_fd, const struct http_request *req) {
+	if (strcmp(req->method, "GET") != 0) {
+		const char *resp =
+		"HTTP/1.1 405 Method Not Allowed\r\n"
+		"Allow: GET\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return;
+	}
+
+	if (strstr(req->path, "..")) {
+		const char *resp =
+		"HTTP/1.1 400 Bad Request\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+		return;
+	}
+
+	char file_path[PATH_MAX];
+	snprintf(file_path, sizeof(file_path), "www%s", req->path);
+	if (file_path[strlen(file_path) - 1] == '/') {
+		strncat(file_path, "index.html",
+		sizeof(file_path) - strlen(file_path) - 1);
+	}
+
+	struct stat st;
+	if (stat(file_path, &st) == 0 && S_ISREG(st.st_mode)) {
+		int fd = open(file_path, O_RDONLY);
+		if (fd < 0) {
+			const char *resp =
+			"HTTP/1.1 500 Internal Server Error\r\n"
+			"Content-Length: 0\r\n"
+			"\r\n";
+			send(client_fd, resp, strlen(resp), 0);
+			return;
+		}
+
+		char header[256];
+		int hlen = snprintf(header, sizeof(header),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Length: %zu\r\n"
+		"Content-Type: application/octet-stream\r\n"
+		"\r\n",
+		(size_t)st.st_size
+		);
+		send(client_fd, header, hlen, 0);
+
+		char buf[4096];
+		ssize_t r;
+		while ((r = read(fd, buf, sizeof(buf))) > 0) {
+			send(client_fd, buf, r, 0);
+		}
+		close(fd);
+	} 
+	else {
+		const char *resp =
+		"HTTP/1.1 404 Not Found\r\n"
+		"Content-Length: 0\r\n"
+		"\r\n";
+		send(client_fd, resp, strlen(resp), 0);
+	}
 }
 
 void handle_client_request(int client_fd) {
@@ -323,12 +392,8 @@ void handle_client_request(int client_fd) {
 		close(client_fd);
 		return;
 	}
+	send_file_response(client_fd, &req);
 
-	const char *resp200 =
-		"HTTP/1.1 200 OK\r\n"
-        	"Content-Length: 0\r\n"
-        	"\r\n";
-	send(client_fd, resp200, strlen(resp200), 0);
 	cleanup(&req);
 	free(request);
 	close(client_fd);
@@ -392,20 +457,20 @@ void poll_for_connections(int listen_fd) {
 int main() {
 	init_user_map();
 	add_user("Alice",   "0123456");
-    add_user("Bob",     "987654");
-    add_user("Charlie", "pass123");
-    add_user("David",   "qwerty");
-    add_user("Eve",     "evepass");
-    add_user("Frank",   "fr4nk!");
-    add_user("Grace",   "gracepwd");
-    add_user("Heidi",   "heidipwd");
-    add_user("Ivan",    "ivan123");
-    add_user("Judy",    "judypass");
+	add_user("Bob",     "987654");
+	add_user("Charlie", "pass123");
+	add_user("David",   "qwerty");
+	add_user("Eve",     "evepass");
+	add_user("Frank",   "fr4nk!");
+	add_user("Grace",   "gracepwd");
+	add_user("Heidi",   "heidipwd");
+	add_user("Ivan",    "ivan123");
+	add_user("Judy",    "judypass");
 
-    printf("Total users added: %zu\n", user_count);
-    for (size_t i = 0; i < user_count; i++) {
-        printf("User %zu: %s / %s\n", i+1, entries[i].username, entries[i].password);
-    }
+	printf("Total users added: %zu\n", user_count);
+	for (size_t i = 0; i < user_count; i++) {
+		printf("User %zu: %s / %s\n", i+1, entries[i].username, entries[i].password);
+	}
 
 	int listen_fd = create_listening_socket(PORT);
 	printf("Listening on port %d\n", PORT);
@@ -414,8 +479,8 @@ int main() {
 
 	close(listen_fd);
 
-    free_user_map();
-    return 0;
+	free_user_map();
+	return 0;
 
 }
 
