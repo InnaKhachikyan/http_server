@@ -158,7 +158,7 @@ int parse_http_request(const char *raw, struct http_request *req) {
 	char *met = strtok_r(line, " ", &save_ptr);
 	char *pth = strtok_r(NULL, " ", &save_ptr);
 	char *ver = strtok_r(NULL, " ", &save_ptr);
-	if (!met || !pth || !ver) { 
+	if (!met || !pth || !ver || *pth == '\0' || pth[0] != '/') { 
 		free(copy); 
 		return -1; 
 	}
@@ -316,7 +316,7 @@ static void send_file_response(int client_fd, const struct http_request *req) {
 		return;
 	}
 
-	if (strstr(req->path, "..")) {
+	if (strstr(req->path, "/..") || strstr(req->path, "../")) {
 		const char *resp =
 		"HTTP/1.1 400 Bad Request\r\n"
 		"Content-Length: 0\r\n"
