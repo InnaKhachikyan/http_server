@@ -85,28 +85,3 @@ bool authenticate_user(const char *user, const char *pass) {
 	}
 	return false;
 }
-
-/*
-int main(void) {
-    init_user_map();
-
-    add_user("Alice",   "0123456");
-    add_user("Bob",     "987654");
-    add_user("Charlie", "pass123");
-    add_user("David",   "qwerty");
-    add_user("Eve",     "evepass");
-    add_user("Frank",   "fr4nk!");
-    add_user("Grace",   "gracepwd");
-    add_user("Heidi",   "heidipwd");
-    add_user("Ivan",    "ivan123");
-    add_user("Judy",    "judypass");
-
-    printf("Total users added: %zu\n", user_count);
-    for (size_t i = 0; i < user_count; i++) {
-        printf("User %zu: %s / %s\n", i+1, entries[i].username, entries[i].password);
-    }
-
-    free_user_map();
-    return 0;
-}
-*/
