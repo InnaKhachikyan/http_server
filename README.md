@@ -10,9 +10,9 @@ Task steps:
 
 Besides C compiler also requires OpenSSL development libraries.
 
-## How to test
--make (to build)
--make test (to run the tests with the script)
+## How to test:
+- make (to build)
+- make test (to run the tests with the script)
 I have a script which contains tests for the server.
 
 I have also pushed the folder www, which contains index.html, css and js files, so that the server may be checked in the browser.
