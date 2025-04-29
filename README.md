@@ -10,6 +10,15 @@ Task steps:
 
 Besides C compiler also requires OpenSSL development libraries.
 
+## How to test
+for building:
+-make
+for testing:
+-make test
+I have a script which contains tests for the server.
+
+I have also pushed the folder www, which contains index.html, css and js files, so that the server may be checked in the browser.
+
 ## Files
 
 ### server.c
@@ -80,3 +89,4 @@ In the child this method is called, it calls corresponding methods in the body t
 ### cleanup()
 frees all dynamically allocated memory and closes the socket.
 
+P.S. I know it would be better to have http_response as a separate struct, the code would be more readable, scalable and cleaner. But did not have much time to update the implementation accordingly.

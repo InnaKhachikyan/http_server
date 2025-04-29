@@ -1,0 +1,37 @@
+/*basic styles*/
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f4;
+}
+header {
+    background: #35424a;
+    color: #ffffff;
+    padding: 10px 0;
+    text-align: center;
+}
+h1 {
+    margin: 0;
+}
+h2 {
+    color: #35424a;
+}
+h3 {
+    color: #35424a;
+}
+h4 {
+    color: #35424a;
+}
+h5 {
+    color: #35424a;
+}
+h6 {
+    color: #35424a;
+}
+p {
+    line-height: 1.6;
+}
+p img {
+    max-width: 100%;
+}

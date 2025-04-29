@@ -342,15 +342,27 @@ static void send_file_response(int client_fd, const struct http_request *req) {
 			send(client_fd, resp, strlen(resp), 0);
 			return;
 		}
+		const char *mime = "application/octet-stream";
+		const char *ext = strrchr(file_path, '.');
+		if (ext) {
+			if (strcasecmp(ext, ".html") == 0 || strcasecmp(ext, ".htm") == 0) {
+				mime = "text/html";
+			} 
+			else if (strcasecmp(ext, ".css") == 0) {
+				mime = "text/css";
+			} 
+			else if (strcasecmp(ext, ".js") == 0) {
+				mime = "application/javascript";
+			}
+		}
 
 		char header[256];
 		int hlen = snprintf(header, sizeof(header),
 		"HTTP/1.1 200 OK\r\n"
 		"Content-Length: %zu\r\n"
-		"Content-Type: application/octet-stream\r\n"
+		"Content-Type: %s\r\n"
 		"\r\n",
-		(size_t)st.st_size
-		);
+		(size_t)st.st_size, mime);
 		send(client_fd, header, hlen, 0);
 
 		char buf[4096];
