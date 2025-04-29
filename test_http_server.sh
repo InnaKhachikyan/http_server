@@ -2,7 +2,9 @@
 # Test suite for http_server
 # This script launches the server, runs tests, then cleans up.
 
-# Configuration\ nSERVER_BINARY="./http_server"
+# Configuration\ i
+SERVER_BINARY="./http_server"
+
 SERVER_URL="http://127.0.0.1:8080"
 AUTH_USER="Alice"
 AUTH_PASS="0123456"
@@ -44,7 +46,7 @@ run_test "GET /index.html with valid auth" -u "$AUTH_USER:$AUTH_PASS" "$SERVER_U
 run_test "GET /nope.txt" -u "$AUTH_USER:$AUTH_PASS" "$SERVER_URL/nope.txt" 404
 
 # 5. Directory traversal attempt → 400
-run_test "GET /../secret" -u "$AUTH_USER:$AUTH_PASS" "$SERVER_URL/../secret" 400
+run_test "GET /../secret" -u "$AUTH_USER:$AUTH_PASS" --path-as-is "$SERVER_URL/../secret" 400
 
 # 6. Wrong credentials → 403
 run_test "GET / with wrong auth" -u "Alice:wrongpass" "$SERVER_URL/" 403

@@ -315,7 +315,6 @@ static void send_file_response(int client_fd, const struct http_request *req) {
 		send(client_fd, resp, strlen(resp), 0);
 		return;
 	}
-
 	if (strstr(req->path, "/..") || strstr(req->path, "../")) {
 		const char *resp =
 		"HTTP/1.1 400 Bad Request\r\n"
