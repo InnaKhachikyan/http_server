@@ -1,91 +1,164 @@
-Task steps:
-1) Write the server c  file
-2) Fork/thread for each client request
-3) Receive a message from the client
-4) parse http request from client (headers which include auth info, request method, host, path, etc.)
-5) decode the user and password
-6) verify with the table the user/password
-7) check if the given path exists, return whatever is in the file, else return 404 error.
-8) Return the response unchunked.
+# HTTP Server in C
 
-Besides C compiler also requires OpenSSL development libraries.
+## Overview
 
-## How to test:
-- make (to build)
-- make test (to run the tests with the script)
+A concurrent HTTP server written in C using a process-per-client model (`fork()`). It parses HTTP/1.1-style requests but operates with HTTP/1.0-style connection handling (no persistent connections). Each incoming connection is handled by a forked child process. The server parses HTTP request lines and headers, enforces HTTP Basic Authentication, and responds with file content read from a local `www/` directory. All responses are sent unchunked with a fixed `Content-Length` header.
 
-I have a script which contains tests for the server.
+This is a systems and network programming project. It prioritizes implementation clarity over protocol completeness and is not intended for production use. 
+The server follows a simple process-per-connection model, prioritizing clarity over scalability.
+The implementation focuses on core HTTP mechanics and OS-level behavior rather than full protocol compliance.
 
-I have also pushed the folder www, which contains index.html, css and js files, so that the server may be checked in the browser.
+---
 
-## Files
+## Features
 
-### server.c
-The main functionality is implemented here.
-### userpass_map.h
-Headers for the user passwords map. Gives the main "interface" to the user without exposing the implementation details.
-### userpass_map.c
-Main implementation of the functions for the map, add/delete/authenticate/init etc.
-Initially these two were in the same .c file, however I had error "multiple definition", so I had to separate the headers with ifndef (if defined not to redefine it).
+- **Concurrent clients** via `fork()` — one child process per connection, with non-blocking zombie reaping using `waitpid(WNOHANG)`
+- **`poll()`-based connection loop** on port 8080 with a 100 ms timeout
+- **HTTP request parsing** — request line (method, path, version) and up to 50 headers
+- **Query string stripping** — anything after `?` is discarded before path resolution
+- **Directory traversal rejection** — any path containing `..` returns `400 Bad Request`
+- **Automatic `index.html` resolution** for paths ending with `/`
+- **HTTP Basic Authentication** — decodes Base64 credentials via OpenSSL's BIO API and verifies against an in-memory user table
+- **GET-only** — any other method returns `405 Method Not Allowed`
+- **Static file serving** from `www/` with basic MIME type detection (`.html`, `.css`, `.js`, `application/octet-stream` fallback)
+- **Unchunked responses** — full `Content-Length` sent in every `200 OK`
+- **Header size limit** — requests exceeding 8 KB are rejected
+- **Test script** — automated test suite runnable via `make test`
+- **Stateless request handling** — each connection is handled independently in a child process
 
-## Features:
-- Handling multiple connections: the server listens on port 8080, polls for connections.
-- Forks for each client: the process is forked for each connection with a client
-- Method Restrictions: handles only GET method, for any other method sends 405, Method not allowed.
-- Basic Authentification: uses openSSL for base64 decoding
-- Index files: if the request path ends with a trailing ‘/’ (for example /, /docs/, /img/gallery/), the server appends index.html to that path before attempting to serve the file.
-- Directory traversal protection: Rejects any path containing "..", sends Bad request.
-- Query parameters: are striped, the parsing is done up to "?" or newline.
-- Body handling: the body of the request (if there is any) is ignored.
+---
 
-### main():
-the user map is initialized and populated with a set of username/password pairs. A listening socket is created on PORT (default 8080).
+## Project Structure
 
-### poll_for_connections():
-monitors the listening socket using poll() with wait time 100ms, when ready, accepts the client socket and calls the fork_for_client function.
+| File | Role |
+|---|---|
+| `server.c` | Socket setup, connection loop, request reading, parsing, authentication, file serving |
+| `userpass_map.h` | Public interface for the user/password store |
+| `userpass_map.c` | Dynamic array of `User` structs with `init`, `add`, `delete`, `authenticate`, and `free` operations |
+| `www/` | Static files served by the server (`index.html`, `styles.css`, `script.js`, `test.txt`) |
+| `test_http_server.sh` | Bash test suite using `curl`; covers auth, 404, 405, traversal, and concurrency |
+| `makefile` | Build and test targets |
 
-### fork_for_client
-pid is used to check the fork of the process. If it's negative, then something went wrong, if it's 0, then we are in the child process and don't need the listening socket anymore, close it, and call the handle_client_request method. If it's 1, then we are in parent process and don't need the client socket anymore, close it.
+---
 
-### read_http_request
-Reads the request in READ_CHUNK chunks in a while loop reallocating each time the buffer when the next chunk needs to be read Stops when the size is too big (MAX_HEADER_SIZE) or when the "\r\n\r\n" is reached. If fails, frees allocated memory and eiter returns -1 or calls exit().
+## Server Workflow
 
-### trim
-Eliminated leading/trailing whitespaces from the string in-place
+1. **Initialization** — `init_user_map()` allocates the user table; a fixed set of username/password pairs is added via `add_user()`.
+2. **Socket creation** — TCP socket bound to `0.0.0.0:8080` with `SO_REUSEADDR`; `listen(SOMAXCONN)`.
+3. **Connection polling** — `poll()` monitors the listening socket with a 100 ms timeout; pending zombie children are reaped each iteration.
+4. **Accept** — `accept()` produces a client file descriptor.
+5. **Fork** — `fork()` creates a child process. The parent closes the client fd; the child closes the listening fd.
+6. **Request reading** — child reads from the client socket in 256-byte chunks into a dynamically grown buffer until `\r\n\r\n` is found or the 8 KB limit is hit.
+7. **Parsing** — request line and headers are tokenized; query string is stripped.
+8. **Authentication** — `Authorization` header is located, `Basic` prefix verified, credentials Base64-decoded, and the username/password pair checked against the user table.
+9. **File serving** — path is validated, resolved against `www/`, stat-checked, and sent with appropriate status and MIME type.
+10. **Cleanup** — all heap allocations freed, client socket closed, child exits.
 
-### parse_http_request
-Splits on \r\n, then tokenizes the request-line into method, path and version. Strips any query string from the path (anything after "?"). Stores each header name/value pair in the req->header_name/req->header_value arrays. Captures any body after \r\n\r\n. Returns 0 on success and -1 on malformed input.
-An entirely empty path is not valid, real clients mostly send at least '/', so in that case the parser returns -1.
+---
 
-### authenticate
-Searches for the corresponding header and assigns to auth var.
-Errors:
-400, Bad request: 
-	- If not starting with "Basic "
-	- If decoding went wrong and not a positive number returned
-	- If format user:pass missing
-401, Unauthorized:
-	- If Authorization header is missing
-403, Forbidden:
-	- If user authentication failed (wrong username or password)
-Returns true if authentication succeeds.
+## Request Handling Details
 
-### send_file_response
-If the method is not GET, sends 405 Method not allowed.
-If the client tries to enter parent directory with "..", 400, Bad request is sent.
-If the request path is '/' or ends with a trailing '/', the server treats it as a directory and appends index.html before trying to serve the file.
-If anything goes wrong when opening the file, 500, Internal Server Error is sent. Otherwise, 200, OK.
-If the file is not there, 404, Not found.
+### Request Reading
 
-### handle_client_request()
-In the child this method is called, it calls corresponding methods in the body to do the job step by step:
-1) read_http_request: if negative return, closes the socket, returns.
-2) parse_http_reqeust: if negative return, frees memory, closes the socket, returns.
-3) authenticate: if went wrong, frees memory and returns.
-4) send_file_response
-5) in the end calls the cleanup and closes the client socket.
+`read_http_request()` reads into a heap-allocated buffer starting at 256 bytes, doubling capacity on each reallocation. Reading stops when `\r\n\r\n` is found in the buffer (end of headers), the peer closes the connection, or the buffer would exceed `MAX_HEADER_SIZE` (8 KB). On size overflow, the function returns `-1` and frees the buffer; on `recv` failure, it calls `exit()` from the child.
 
-### cleanup()
-frees all dynamically allocated memory and closes the socket.
+### Request Parsing
 
-P.S. I know it would be better to have http_response as a separate struct, the code would be more readable, scalable and cleaner. But did not have much time to update the implementation accordingly.
+`parse_http_request()` duplicates the raw buffer and tokenizes it with `strtok_r`:
+
+- **Request line** — split on spaces into method, path, version; path must start with `/`.
+- **Query string** — truncated at the first `?`.
+- **Headers** — each `name: value` line is split at the first `:`, whitespace-trimmed, and stored in parallel `header_name`/`header_value` arrays (max 50 entries).
+- **Body** — the substring after `\r\n\r\n` is captured into `req->body` but is otherwise ignored.
+
+Returns `0` on success, `-1` on malformed input.
+
+### Authentication
+
+`authenticate()` performs a case-insensitive linear scan of the parsed headers for `Authorization`. 
+
+| Condition | Response |
+|---|---|
+| Header absent | `401 Unauthorized` + `WWW-Authenticate: Basic realm="MyServer"` |
+| Value does not start with `Basic ` | `400 Bad Request` |
+| Base64 decode fails or returns ≤ 0 bytes | `400 Bad Request` |
+| Decoded string missing `:` separator | `400 Bad Request` |
+| Username or password wrong | `403 Forbidden` |
+| Credentials match | returns `true`, proceeds |
+
+Base64 decoding uses an OpenSSL BIO chain (`BIO_f_base64` + `BIO_new_mem_buf`) with `BIO_FLAGS_BASE64_NO_NL`.
+
+### File Serving
+
+`send_file_response()` handles responses:
+
+- Non-GET method → `405 Method Not Allowed` (with `Allow: GET`).
+- Path contains `/..` or `../` → `400 Bad Request`.
+- Path ending with `/` → `index.html` appended before `stat()`.
+- `stat()` succeeds and path is a regular file → open, send header with `Content-Length` and `Content-Type`, stream file in 4 KB reads.
+- `stat()` fails or path is not a regular file → `404 Not Found`.
+- `open()` fails after a successful `stat()` → `500 Internal Server Error`.
+
+MIME type is inferred from the file extension: `.html`/`.htm` → `text/html`, `.css` → `text/css`, `.js` → `application/javascript`, anything else → `application/octet-stream`.
+
+---
+
+## Build and Test
+
+**Dependencies:** GCC, OpenSSL development libraries (`libssl-dev` / `openssl-devel`).
+
+```bash
+# Build
+make
+
+# Run automated tests (starts server, runs curl tests, stops server)
+make test
+
+# Manual browser test
+./http_server   # then open http://127.0.0.1:8080 in a browser
+```
+
+The `www/` directory contains `index.html`, `styles.css`, `script.js`, and `test.txt` for manual verification.
+
+---
+
+## Current Status
+
+### Implemented
+
+- TCP server with `poll()`-based accept loop
+- `fork()`-per-client concurrency with zombie reaping
+- HTTP header parsing (request line + headers)
+- HTTP Basic Authentication via OpenSSL Base64
+- In-memory user/password table (dynamic array)
+- GET-only static file serving with MIME detection
+- Directory index resolution, query string stripping, traversal rejection
+- Correct `Content-Length` in all responses (no chunked encoding)
+- Automated test script covering the main response codes
+
+### Limitations
+
+- **GET only** — `POST`, `PUT`, `DELETE`, and other methods are rejected.
+- **No persistent connections** — socket is closed after each request (HTTP/1.0 semantics despite `HTTP/1.1` in the status line).
+- **No chunked transfer encoding** — requires the full file to fit within a single stat/open/read sequence.
+- **No HTTPS / TLS** — all traffic is plaintext.
+- **Passwords stored in plaintext** — the user table holds cleartext passwords; no hashing.
+- **Hardcoded credentials** — users are populated in `main()` at compile time; no config file or runtime registration.
+- **Process-per-client** — `fork()` has higher per-connection overhead than a thread pool or event loop.
+- **No response abstraction** — HTTP response construction is inlined in `send_file_response()`; there is no dedicated response struct or builder.
+- Header boundary detection relies on scanning the accumulated buffer for `\r\n\r\n`. While robust for typical inputs, it does not implement a fully incremental parser.
+
+### Possible Improvements
+
+- Add password hashing (e.g., bcrypt or SHA-256 with salt).
+- Introduce a dedicated `http_response` struct to separate response construction from file I/O.
+- Replace `fork()` with a thread pool or `epoll`-based event loop for lower connection overhead.
+- Add `Keep-Alive` / persistent connection support.
+- Expand MIME type table (images, fonts, JSON, etc.).
+- Load users from a configuration file at startup.
+
+---
+
+## Notes
+
+This project was written as a hands-on exercise in POSIX network programming: socket APIs, process management, HTTP protocol structure, and OpenSSL integration. The goal was a working, readable implementation — not a feature-complete or production-grade server.
